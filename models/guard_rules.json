@@ -1,0 +1,9 @@
+{
+  "age_min": 18,
+  "age_max": 85,
+  "min_monthly_income": 0,
+  "max_emi_burden_ratio": 1.0,
+  "max_credit_utilization": 1.0,
+  "max_previous_defaults": 10,
+  "decision_threshold": 0.65
+}
