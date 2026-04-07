@@ -10,7 +10,7 @@ from explain import explain
 
 # ── PAGE CONFIG ────────────────────────────────────────────────
 st.set_page_config(
-    page_title="FairCredit 2.0",
+    page_title="FairCredit",
     layout="wide",
     page_icon="🏦"
 )
@@ -50,37 +50,39 @@ def log_override(applicant_id, decision, note, risk_score):
 st.sidebar.title("🏦 FairCredit 2.0")
 st.sidebar.markdown("*Fair & Explainable Loan AI*")
 st.sidebar.divider()
+_default_page = st.session_state.pop("_page_override", "📋  Applicant Form")
 page = st.sidebar.radio(
     "Navigation",
-    ["📋  Applicant Form", "📊  Decision Panel", "🔍  Audit & Fairness"]
+    ["📋  Applicant Form", "📊  Decision Panel", "🔍  Audit & Fairness"],
+    index=["📋  Applicant Form", "📊  Decision Panel", "🔍  Audit & Fairness"].index(_default_page),
 )
 
 # ── SAMPLE PROFILES ────────────────────────────────────────────
 SAMPLES = {
-    "Rahul Mehta — Moderate Risk": {
-        "Age": 35, "AnnualIncome": 52000, "CreditScore": 650,
-        "Experience": 8, "LoanAmount": 18000, "LoanDuration": 36,
-        "NumberOfDependents": 2, "MonthlyDebtPayments": 1800,
-        "CreditCardUtilizationRate": 0.55, "NumberOfOpenCreditLines": 4,
-        "NumberOfCreditInquiries": 3, "DebtToIncomeRatio": 0.42,
-        "BankruptcyHistory": 0, "PreviousLoanDefaults": 1,
-        "PaymentHistory": 0.72, "LengthOfCreditHistory": 7,
-        "SavingsAccountBalance": 4000, "CheckingAccountBalance": 1500,
-        "TotalAssets": 25000, "TotalLiabilities": 18000,
-        "MonthlyIncome": 4333, "UtilityBillsPaymentHistory": 0.80,
-        "JobTenure": 3, "NetWorth": 7000,
-        "BaseInterestRate": 0.07, "InterestRate": 0.12,
-        "MonthlyLoanPayment": 598, "TotalDebtToIncomeRatio": 0.45,
-        "MissedPaymentFlag": 1, "HighUtilizationFlag": 1,
-        "SavingsToLoanRatio": 0.22,
-        "EmploymentStatus_Self-Employed": 0, "EmploymentStatus_Unemployed": 0,
-        "EducationLevel_Bachelor": 1, "EducationLevel_Doctorate": 0,
-        "EducationLevel_High School": 0, "EducationLevel_Master": 0,
-        "MaritalStatus_Married": 1, "MaritalStatus_Single": 0, "MaritalStatus_Widowed": 0,
-        "HomeOwnershipStatus_Other": 0, "HomeOwnershipStatus_Own": 0, "HomeOwnershipStatus_Rent": 1,
-        "LoanPurpose_Debt Consolidation": 0, "LoanPurpose_Education": 0,
-        "LoanPurpose_Home": 1, "LoanPurpose_Other": 0,
-        "EMIBurdenRatio": 0.42,
+    "Rahul Mehta — True Moderate (Yellow Tier)": {
+    "Age": 34, "AnnualIncome": 58000, "CreditScore": 705,
+    "Experience": 7, "LoanAmount": 22000, "LoanDuration": 36,
+    "NumberOfDependents": 2, "MonthlyDebtPayments": 1600,
+    "CreditCardUtilizationRate": 0.42, "NumberOfOpenCreditLines": 5,
+    "NumberOfCreditInquiries": 3, "DebtToIncomeRatio": 0.36,
+    "BankruptcyHistory": 0, "PreviousLoanDefaults": 0,
+    "PaymentHistory": 0.78, "LengthOfCreditHistory": 6,
+    "SavingsAccountBalance": 5000, "CheckingAccountBalance": 2000,
+    "TotalAssets": 30000, "TotalLiabilities": 18000,
+    "MonthlyIncome": 4833, "UtilityBillsPaymentHistory": 0.82,
+    "JobTenure": 3, "NetWorth": 12000,
+    "BaseInterestRate": 0.07, "InterestRate": 0.11,
+    "MonthlyLoanPayment": 720, "TotalDebtToIncomeRatio": 0.38,
+    "MissedPaymentFlag": 0, "HighUtilizationFlag": 1,
+    "SavingsToLoanRatio": 0.23,
+    "EmploymentStatus_Self-Employed": 0, "EmploymentStatus_Unemployed": 0,
+    "EducationLevel_Bachelor": 1, "EducationLevel_Doctorate": 0,
+    "EducationLevel_High School": 0, "EducationLevel_Master": 0,
+    "MaritalStatus_Married": 1, "MaritalStatus_Single": 0, "MaritalStatus_Widowed": 0,
+    "HomeOwnershipStatus_Other": 0, "HomeOwnershipStatus_Own": 0, "HomeOwnershipStatus_Rent": 1,
+    "LoanPurpose_Debt Consolidation": 0, "LoanPurpose_Education": 0,
+    "LoanPurpose_Home": 1, "LoanPurpose_Other": 0,
+    "EMIBurdenRatio": 0.36,
     },
     "Priya Sharma — Low Risk": {
         "Age": 42, "AnnualIncome": 145000, "CreditScore": 780,
@@ -380,11 +382,11 @@ elif page == "📊  Decision Panel":
     )
 
     col1, col2, col3 = st.columns(3)
-    risk_score = 1 - score
-    col1.metric("Risk Score",  f"{risk_score*100:.1f}%")
+    default_risk = 1 - score   # score = approval probability; default risk = 1 - that
+    col1.metric("Risk Score (Default %)", f"{default_risk*100:.1f}%")
     col2.metric("AI Decision", "Approve" if guard["approved"] else "Reject")
     col3.metric("Risk Tier",   tier["tier"])
-    st.progress(float(score), text=f"Risk Probability: {risk_score*100:.1f}%")
+    st.progress(float(default_risk), text=f"Default Risk: {default_risk*100:.1f}%  |  Approval Probability: {score*100:.1f}%")
     st.divider()
 
     # ── Top Factors ───────────────────────────────────────────
