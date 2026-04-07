@@ -341,7 +341,10 @@ def _waterfall_plot(shap_vals: np.ndarray, feature_values: np.ndarray,
     top_labels = [top_labels[i] for i in sort_order]
     top_vals   = top_vals[sort_order]
 
-    colors = ["#2ecc71" if v > 0 else "#e74c3c" for v in top_shap]
+    # SHAP is computed for class=1 (Default prediction).
+    # Positive SHAP = raises default risk = BAD for approval (red).
+    # Negative SHAP = lowers default risk = GOOD for approval (green).
+    colors = ["#e74c3c" if v > 0 else "#2ecc71" for v in top_shap]
 
     fig, ax = plt.subplots(figsize=(9, 6))
     fig.patch.set_facecolor("#0f1117")
@@ -364,8 +367,8 @@ def _waterfall_plot(shap_vals: np.ndarray, feature_values: np.ndarray,
     ax.spines[["top", "right", "left", "bottom"]].set_color("#333")
     ax.axvline(0, color="#555", linewidth=0.8)
 
-    green_patch = mpatches.Patch(color="#2ecc71", label="Raises approval chance")
-    red_patch   = mpatches.Patch(color="#e74c3c", label="Lowers approval chance")
+    green_patch = mpatches.Patch(color="#2ecc71", label="Supports approval (lowers default risk)")
+    red_patch   = mpatches.Patch(color="#e74c3c", label="Hurts approval (raises default risk)")
     ax.legend(handles=[green_patch, red_patch], loc="lower right",
               facecolor="#1e1e2e", labelcolor="white", fontsize=8)
 
@@ -406,7 +409,8 @@ def _force_plot_static(shap_vals: np.ndarray, feature_values: np.ndarray,
     cursor = expected_value
     for sv, lbl, fv in sorted(zip(top_shap, top_lbls, top_vals),
                                key=lambda x: x[0]):
-        color = "#2ecc71" if sv > 0 else "#e74c3c"
+        # Positive SHAP = raises default risk = bad for approval
+        color = "#e74c3c" if sv > 0 else "#2ecc71"
         ax.annotate(
             "", xy=(cursor + sv, 0.5), xytext=(cursor, 0.5),
             arrowprops=dict(arrowstyle="->", color=color, lw=1.5),
@@ -442,7 +446,8 @@ def _top_factors(shap_vals: np.ndarray, feature_values: np.ndarray,
             "label": lbl,
             "value": fv,
             "shap_value": sv,
-            "direction": "raises" if sv > 0 else "lowers",
+            # sv > 0 means raises DEFAULT risk = lowers approval chance
+            "direction": "lowers" if sv > 0 else "raises",
             "impact": "high" if abs(sv) > 0.1 else "medium" if abs(sv) > 0.04 else "low",
             "summary": (
                 f"{lbl} = {fv:.2f} "
@@ -452,6 +457,89 @@ def _top_factors(shap_vals: np.ndarray, feature_values: np.ndarray,
         })
     return factors
 
+def _composite_approval_prob_explain(row_series) -> float:
+    """Mirror of predict.py composite scoring for counterfactual use in explain."""
+    import numpy as np
+    score = 0.0
+    score += ((float(row_series.get("CreditScore", 600)) - 300) / 600) * 0.25
+    score += float(row_series.get("PaymentHistory", 0.5)) * 0.20
+    score += (1 - min(float(row_series.get("DebtToIncomeRatio", 0.5)), 1.0)) * 0.15
+    score += max(0.0, 1 - float(row_series.get("PreviousLoanDefaults", 0)) * 0.25) * 0.15
+    score += (1 - min(float(row_series.get("CreditCardUtilizationRate", 0.5)), 1.0)) * 0.10
+    score += min(float(row_series.get("SavingsToLoanRatio", 0)), 1.0) * 0.07
+    score += float(row_series.get("UtilityBillsPaymentHistory", 0.5)) * 0.05
+    if float(row_series.get("MissedPaymentFlag", 0)) == 1:
+        score -= 0.08
+    if float(row_series.get("BankruptcyHistory", 0)) == 1:
+        score -= 0.10
+    if float(row_series.get("HighUtilizationFlag", 0)) == 1:
+        score -= 0.04
+    return float(np.clip(score, 0.05, 0.95))
+
+
+def _counterfactual_composite(
+    applicant_df: pd.DataFrame,
+    current_prob: float,
+    threshold: float,
+) -> dict | None:
+    """
+    Counterfactual using composite scoring (consistent with predict.py).
+    Finds smallest actionable single-feature change to reach Green tier.
+    """
+    tier = _risk_tier(current_prob, threshold)["tier"]
+    if tier != "Yellow":
+        return None
+
+    row = applicant_df.iloc[0].to_dict()
+
+    actionable = {
+        "MonthlyDebtPayments":      ("reduce",   -0.10),
+        "CreditCardUtilizationRate":("reduce",   -0.05),
+        "PreviousLoanDefaults":     ("reduce",   -1),
+        "SavingsAccountBalance":    ("increase",  0.10),
+        "LoanAmount":               ("reduce",   -0.05),
+        "DebtToIncomeRatio":        ("reduce",   -0.05),
+    }
+
+    results = []
+    for feature, (direction, step) in actionable.items():
+        if feature not in row:
+            continue
+        current_val = row[feature]
+        if current_val == 0 and direction == "reduce":
+            continue
+
+        test_row = dict(row)
+        for steps in range(1, 21):
+            if direction == "reduce":
+                new_val = current_val * (1 + step * steps) if current_val > 0 else current_val + step * steps
+            else:
+                new_val = current_val * (1 + step * steps)
+            new_val = max(new_val, 0)
+            test_row[feature] = new_val
+
+            new_prob = _composite_approval_prob_explain(test_row)
+            if new_prob >= threshold:
+                label = FEATURE_LABELS.get(feature, feature)
+                results.append({
+                    "feature": feature,
+                    "label": label,
+                    "direction": direction,
+                    "current_value": current_val,
+                    "required_value": new_val,
+                    "delta": new_val - current_val,
+                    "new_probability": new_prob,
+                    "steps_required": steps,
+                    "summary": _cf_summary(label, direction, current_val, new_val, new_prob, threshold),
+                    "feasible": True,
+                })
+                break
+
+    if not results:
+        return {"feasible": False, "summary": "Multiple simultaneous improvements needed to reach the approval threshold."}
+
+    best = min(results, key=lambda x: x["steps_required"])
+    return best
 
 # ─── Auto-generated decision brief ───────────────────────────────────────────
 
@@ -560,7 +648,7 @@ def explain(
         cohort = _cohort_intelligence(app_df, X_train, y_train)
 
     # ── 8. Counterfactual ────────────────────────────────────────────────────
-    cf = _counterfactual(app_df, risk_score, _threshold, _scaler, _model)
+    cf = _counterfactual_composite(app_df, risk_score, _threshold)
 
     # ── 9. Decision brief ────────────────────────────────────────────────────
     brief = _decision_brief(
